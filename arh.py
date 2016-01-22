@@ -8,7 +8,8 @@ import configparser
 import datetime
 import logging
 
-logging.basicConfig(filename='logs/arh.log', filemode='a', level=logging.DEBUG,
+log_file = r'logs/Архиватор_' + time.strftime(r'%Y.%m.%d') + r'.log'
+logging.basicConfig(filename=log_file, filemode='a', level=logging.DEBUG,
                     format='%(asctime)s %(levelname)s: %(message)s')
 
 
@@ -82,6 +83,7 @@ def arh_log(xml_life, log, arhive_log, name="АС Соцпортал"):
         num_dir = 0
         num_file = 0
         # Составляю список файлов для архивации
+        logging.debug("Создается список файлов для архивации")
         list_file = list()
         for (p, d, f) in os.walk(log, topdown='False'):
             # p - текущий каталог
@@ -92,10 +94,10 @@ def arh_log(xml_life, log, arhive_log, name="АС Соцпортал"):
                 if os.path.getctime(full_name)<delta:
                     # добавляем файлы в список
                     list_file.append(full_name)
-
-
+        logging.debug("Создан список из %s файлов." % len(list_file))
         if len(list_file)>0 :
             # если список не пустой, то делаем архив
+            logging.debug("Начинаю архивацию.")
             # имя архива это дата, старше которой файлов нет
             arh_name = datetime.date.today() - datetime.timedelta(days=xml_life)
             arh_name = arh_name.strftime(arhive_log + "\%Y.%m.%d")+'.tar.xz' # полное имя
@@ -112,17 +114,24 @@ def arh_log(xml_life, log, arhive_log, name="АС Соцпортал"):
                 mytar.close()
             except:
                 Type, Value, Trace = sys.exc_info()
-                error = "Во время создания tar.xz архива произошли ошибки, XML файлы остались без изменений" \
-                        "Тип ошибки: %s Текст: %s" % (Type, Value)
+                error = "Во время создания архива %s произошли ошибки, XML файлы остались без изменений" \
+                        "Тип ошибки: %s Текст: %s Место: %s" % (arh_name, Type, Value, Trace)
                 logging.critical(error)
             else:
+                noDel = 0
                 # выполняем, если при создании архива не возникло ошибок
                 logging.info("Был создан архив: %s" % arh_name)
                 # удаляем заархивированные файлы
+                logging.info("Удаляем заархивированные файлы")
                 for i in list_file:
-                    os.remove(i)
-                num_file = len(list_file)
+                    try:
+                        os.remove(i)
+                    except WindowsError:
+                        logging.error("Не смог удалить файл %s" % i)
+                        noDel += 1
+                num_file = len(list_file) - noDel
         # удаляем пустые каталоги
+        logging.debug("Удаляем пустые каталоги")
         for (p, d, f) in os.walk(log, topdown='False'):
                 # p - текущий каталог
                 # f - файл
@@ -130,12 +139,11 @@ def arh_log(xml_life, log, arhive_log, name="АС Соцпортал"):
                     try:
                         os.rmdir(os.path.join(p, dir_name))
                     except WindowsError:
-                        # не смог удалить папку
-                        # формальное действие
-                        num_dir += 0
+                        # не смог удалить папку, это нормально т.к. я не проверяю пустая папк или нет
+                        logging.debug("Не смог удалить папку %s" % os.path.join(p, dir_name))
                     else:
                         num_dir += 1
-        logging.info("Было удалено - Файлов: %s  Папок: %s" % (num_file, num_dir))
+        logging.info("Было удалено, после переноса в архив - файлов: %s, папок: %s" % (num_file, num_dir))
 
 
 def arh_del(arhive_log, arh_life):
@@ -147,7 +155,7 @@ def arh_del(arhive_log, arh_life):
     else:
         # чистим старые архивы, старше arh_life дней
         delta = time.time() - (arh_life*24*60*60)
-        logging.debug("Очистка старых архивов. Папка с архивом: %s Удаляю архивы старше %s дней" % (arhive_log, arh_life))
+        logging.debug("Очистка старых архивов. Папка с архивом: %s. Удаляю архивы старше %s дней" % (arhive_log, arh_life))
         for (p, d, f) in os.walk(arhive_log, topdown='False'):
             # p - текущий каталог
             # f - файл
@@ -155,8 +163,12 @@ def arh_del(arhive_log, arh_life):
                 full_name = os.path.join(p, file_name)
                 # возвращает кол-во сек. с начала эпохи
                 if os.path.getmtime(full_name)<delta:
-                    os.remove(full_name)
-                    logging.debug("Удалил архив: " + full_name)
+                    try:
+                        os.remove(full_name)
+                    except WindowsError:
+                        logging.error("Не смог удалить старый архив %s" % full_name) 
+                    else:
+                        logging.debug("Удалил архив: " + full_name)
     return err
 
 logging.info("Запуск программы архивации")
@@ -165,14 +177,15 @@ err = 0
 config, err = readConfig("arhiv.ini")
 if err == 0:
     for key in config.keys():
-        sec = config[key]
+        sec = config[key]       
         try:
             arh_log(xml_life=sec["xml_life"], log=sec["log"], arhive_log=sec["arhive_log"], name=key)
             arh_del(sec["arhive_log"], sec["arh_life"])
         except:
             # во время работы архивации произошли ошибки
             Type, Value, Trace = sys.exc_info()
-            logging.critical("Во время архивирования произошла ошибка. Тип ошибки: %s Текст: %s" % (Type, Value))
+            logging.critical("Во время архивирования произошла ошибка. Тип ошибки: %s Текст: %s Трассировка: %s" % (Type, Value, Trace))
             err += 1
 logging.info("Остановка программы архивации")
 exit(err)
+
